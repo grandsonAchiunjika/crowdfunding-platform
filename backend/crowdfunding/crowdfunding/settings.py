@@ -39,9 +39,42 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # Custom apps
     'core',
+    # Third-party apps
+    'corsheaders',
+    'rest_framework',
+    'rest_framework_simplejwt',
+
 ]
 
+AUTH_USER_MODEL = 'core.CustomUser'
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',  # Enables token-based auth
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 10,  # Limits the number of items per page for better performance
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Token expiration time
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),     # Refresh token expiration time
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'UPDATE_LAST_LOGIN': False,
+}
+
+
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -50,6 +83,14 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+# Allow origins for dev purposes
+CORS_ALLOW_ALL_ORIGINS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Change this to your frontend's URL
+    "https://yourfrontend.com"
+]
+
 
 ROOT_URLCONF = 'crowdfunding.urls'
 
@@ -123,3 +164,9 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Payment gateway settings
+import os
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "sk_test_51Qrnra01y84G4oZWzDPeXis56WikFor5PfGWQ7KXCe02n0rL50I0oggnfc0LCHt49FjeWBHQ565Ry599LOhpcTPP00VAHeizSs")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "pk_test_51Qrnra01y84G4oZWdRW67O2GvjfID8VgkoJs5SlwhrOGitf8ZNzYr98xoWJyjXJFUUFLCzQTUF6sDTMHlLilfyZU00zPuSueCy")

@@ -15,8 +15,23 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+# API Home View
+@api_view(["GET"])
+def api_home(request):
+    return Response({
+        "message": "Welcome to the Crowdfunding API!",
+        "campaigns": "/api/v1/campaigns/",
+        "donations": "/api/v1/donations/",
+        "comments": "/api/v1/comments/",
+        "transactions": "/api/v1/transactions/"
+    })
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path("", api_home, name="api-home"),  # API Home
+    path("admin/", admin.site.urls),
+    path("api/v1/", include("core.urls")),  # Include core app URLs under api/v1
 ]
