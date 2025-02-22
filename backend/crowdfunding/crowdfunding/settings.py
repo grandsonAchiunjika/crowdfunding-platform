@@ -149,6 +149,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Payment gateway settings
 
+
+# PayChangu Credentials
+PAYCHANGU_PUBLIC_KEY = os.getenv("PAYCHANGU_PUBLIC_KEY")
+PAYCHANGU_SECRET_KEY = os.getenv("PAYCHANGU_SECRET_KEY")
+PAYCHANGU_WEBHOOK_SECRET = os.getenv("PAYCHANGU_WEBHOOK_SECRET")
+PAYCHANGU_BASE_URL = os.getenv("PAYCHANGU_BASE_URL")
+
+# Stripe Credentials
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
 

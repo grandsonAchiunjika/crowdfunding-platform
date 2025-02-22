@@ -1,4 +1,3 @@
-import stripe
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -9,11 +8,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from .models import Campaign, Donation, Comment, Transaction
 from .serializers import CampaignSerializer, DonationSerializer, CommentSerializer, TransactionSerializer
-from .payments import create_stripe_payment
+from .payments import PayChanguService
 from django.shortcuts import get_object_or_404
-
-# Set up Stripe API key
-stripe.api_key = settings.STRIPE_SECRET_KEY  # Make sure you have this in your settings
+from datetime import datetime
+from rest_framework.exceptions import ValidationError
 
 # -------------------------
 # Campaign ViewSet
@@ -23,7 +21,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     serializer_class = CampaignSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
-    @action(detail=False, methods=['get'], url_path=r'user/(?P<user_id>\d+)')
+    @action(detail=False, methods=['get'], url_path=r'user/(?P<user_id>\\d+)')
     def user_campaigns(self, request, user_id=None):
         """Returns all campaigns created by a specific user."""
         campaigns = self.queryset.filter(creator_id=user_id)
@@ -38,49 +36,35 @@ class CampaignViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(campaigns, many=True)
         return Response(serializer.data)
 
-    # -------------------------
-    # Stripe Checkout Session Creation
-    # -------------------------
-    @action(detail=True, methods=['post'], url_path='create-checkout-session')
-    def create_checkout_session(self, request, pk=None):
+    @action(detail=True, methods=['post'], url_path='initiate-payment')
+    def initiate_payment(self, request, pk=None):
         """
-        Create a Stripe Checkout session for a campaign donation.
+        Initiate a mobile money payment using PayChangu.
+        Expected data: {"amount": 100, "currency": "USD", "phone_number": "123456789", "email": "user@example.com", "callback_url": "https://example.com/callback"}
         """
         campaign = get_object_or_404(Campaign, pk=pk)
+        data = request.data
+
+        # Validate the necessary fields
+        required_fields = ['amount', 'currency', 'phone_number', 'email', 'callback_url']
+        for field in required_fields:
+            if field not in data:
+                return Response({f'error': f'Missing field: {field}'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            success_url = request.data.get('success_url', request.build_absolute_uri('/success/'))
-            cancel_url = request.data.get('cancel_url', request.build_absolute_uri('/cancel/'))
-
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[
-                    {
-                        'price_data': {
-                            'currency': 'usd',
-                            'product_data': {
-                                'name': campaign.title,
-                                'description': campaign.description,
-                            },
-                            'unit_amount': int(campaign.donation_amount * 100),  # Stripe requires the amount in cents
-                        },
-                        'quantity': 1,
-                    },
-                ],
-                mode='payment',
-                success_url=success_url,
-                cancel_url=cancel_url,
+            response = PayChanguService.initiate_payment(
+                amount=data['amount'],
+                currency=data['currency'],
+                phone_number=data['phone_number'],
+                email=data['email'],
+                callback_url=data['callback_url']
             )
 
-            return JsonResponse({
-                'id': checkout_session.id
-            })
-
-        except stripe.error.StripeError as e:
-            return JsonResponse({'error': f"Stripe error: {e.error.message}"}, status=400)
+            return Response(response, status=status.HTTP_200_OK)
 
         except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # -------------------------
 # Donation ViewSet
@@ -119,12 +103,13 @@ class DonationViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(donations, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path=r'summary/(?P<campaign_id>\d+)')
+    @action(detail=False, methods=['get'], url_path=r'summary/(?P<campaign_id>\\d+)')
     def donation_summary(self, request, campaign_id=None):
         """Returns total donation amount for a given campaign."""
         total_donations = self.queryset.filter(campaign_id=campaign_id).aggregate(Sum('amount'))
         total_amount = total_donations.get('amount__sum', 0) or 0
         return Response({'campaign_id': campaign_id, 'total_donated': total_amount})
+
 
 # -------------------------
 # Comment ViewSet
@@ -139,6 +124,7 @@ class CommentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         campaign_id = self.request.query_params.get('campaign_id')
         return queryset.filter(campaign_id=campaign_id) if campaign_id else queryset
+
 
 # -------------------------
 # Transaction ViewSet
@@ -158,9 +144,18 @@ class TransactionViewSet(viewsets.ModelViewSet):
         end_date = self.request.query_params.get('end_date')
 
         if start_date:
-            queryset = queryset.filter(created_at__gte=start_date)
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                queryset = queryset.filter(created_at__gte=start_date)
+            except ValueError:
+                raise ValidationError("Invalid start_date format. Expected format: YYYY-MM-DD.")
+        
         if end_date:
-            queryset = queryset.filter(created_at__lte=end_date)
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                queryset = queryset.filter(created_at__lte=end_date)
+            except ValueError:
+                raise ValidationError("Invalid end_date format. Expected format: YYYY-MM-DD.")
 
         return queryset
 
@@ -177,34 +172,3 @@ class TransactionViewSet(viewsets.ModelViewSet):
         total_transactions = self.get_queryset().aggregate(Sum('amount'))
         total_amount = total_transactions.get('amount__sum', 0) or 0
         return Response({'total_transactions': total_amount})
-
-# -------------------------
-# Stripe Payment ViewSet
-# -------------------------
-class PaymentViewSet(viewsets.ViewSet):
-    """
-    Handles Stripe payments for donations.
-    """
-
-    @action(detail=False, methods=["post"])
-    def process_payment(self, request):
-        """
-        API endpoint to process a Stripe donation payment.
-        Expected data: {"donation_id": 1, "token": "stripe_token"}
-        """
-        donation_id = request.data.get("donation_id")
-        token = request.data.get("token")
-
-        if not donation_id or not token:
-            return Response({"error": "Missing donation ID or token"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            payment_response = create_stripe_payment(donation_id, token)
-
-            if payment_response.get("success"):
-                return Response({"message": "Payment successful", "transaction_id": payment_response.get("transaction_id")}, status=status.HTTP_200_OK)
-
-            return Response({"error": payment_response.get("error")}, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            return Response({"error": f"Payment processing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

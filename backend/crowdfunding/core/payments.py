@@ -1,47 +1,39 @@
-import stripe
+import requests
+import logging
 from django.conf import settings
-from .models import Transaction, Donation
 
-# Set up Stripe with the secret key
-stripe.api_key = settings.STRIPE_SECRET_KEY
+logger = logging.getLogger(__name__)
 
-def create_stripe_payment(donation_id, token):
-    """
-    Process a Stripe payment for a donation.
-    :param donation_id: The ID of the donation being paid for.
-    :param token: The Stripe payment token received from the frontend.
-    :return: A dictionary with transaction details.
-    """
-    try:
-        donation = Donation.objects.get(id=donation_id)
-        amount_in_cents = int(donation.amount * 100)  # Stripe uses cents
+class PayChanguService:
+    """Handles interactions with PayChangu API."""
 
-        # Create a Stripe charge
-        charge = stripe.Charge.create(
-            amount=amount_in_cents,
-            currency="usd",
-            source=token,
-            description=f"Donation for campaign: {donation.campaign.title}",
-        )
+    @staticmethod
+    def initiate_payment(amount, currency, phone_number, email, callback_url):
+        """Initiate a mobile money payment using Mpamba or Airtel Money."""
+        url = f"{settings.PAYCHANGU_BASE_URL}/v1/payments"
+        payload = {
+            "amount": amount,
+            "currency": currency,
+            "phone_number": phone_number,
+            "email": email,
+            "callback_url": callback_url
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.PAYCHANGU_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
 
-        # Create a transaction record in the database
-        transaction = Transaction.objects.create(
-            user=donation.user,
-            donation=donation,
-            amount=donation.amount,
-            transaction_type="donation",
-            status="completed",
-        )
+        try:
+            response = requests.post(url, json=payload, headers=headers)
 
-        # Update the campaign's raised amount
-        campaign = donation.campaign
-        campaign.raised_amount += donation.amount
-        campaign.save()
+            # Check if the response was successful
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"PayChangu API error: {response.status_code} - {response.text}")
+                return {"error": f"Payment initiation failed with status code {response.status_code}"}
 
-        return {"success": True, "transaction_id": transaction.id}
-
-    except stripe.error.CardError as e:
-        return {"success": False, "error": str(e)}
-
-    except Exception as e:
-        return {"success": False, "error": f"An error occurred: {str(e)}"}
+        except requests.exceptions.RequestException as e:
+            # Catch any HTTP request errors
+            logger.error(f"Error making request to PayChangu API: {str(e)}")
+            return {"error": "Error connecting to the payment service. Please try again later."}
